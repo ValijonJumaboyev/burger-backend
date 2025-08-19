@@ -23,6 +23,6 @@ app.get('/', (req, res) => {
     res.send('Burger Backend API is live!');
 });
 
-app.listen(PORT, "127.0.0.1", () => {
+app.listen(PORT, () => {
     console.log(`Server running at http://127.0.0.1:${PORT}`);
 });
