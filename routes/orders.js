@@ -8,33 +8,50 @@ const router = express.Router();
 router.post("/", async (req, res) => {
     try {
         const { items, customer } = req.body;
-        const totalAmount = items.reduce((acc, i) => acc + i.total, 0);
 
-        // Save the order
+        // Calculate total amount of the order
+        const totalAmount = items.reduce((acc, item) => acc + item.total, 0);
+
+        // Save the order to DB
         const order = new Order({ items, customer, totalAmount });
         await order.save();
 
-        // Update inventory for each item
+        console.log(`Order ${order._id} saved for customer: ${customer}`);
+
+        // Update inventory for each item in the order
         for (const orderItem of items) {
             const { itemId, quantity: orderQuantity } = orderItem;
 
-            // Find the inventory item
-            const inventoryItem = await InventoryItems.findById(itemId);
-            if (!inventoryItem) continue;
+            if (!itemId) {
+                console.warn("No itemId provided for order item:", orderItem);
+                continue;
+            }
 
-            // Decrease quantity, avoid negative numbers
-            inventoryItem.quantity = Math.max(0, inventoryItem.quantity - orderQuantity);
+            const inventoryItem = await InventoryItems.findById(itemId);
+            if (!inventoryItem) {
+                console.warn("Inventory item not found for id:", itemId);
+                continue;
+            }
+
+            // Decrease inventory quantity safely
+            const oldQuantity = inventoryItem.quantity;
+            inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
             inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
 
             await inventoryItem.save();
+
+            console.log(
+                `Updated inventory for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`
+            );
         }
 
-        res.status(201).json(order);
+        res.status(201).json({ message: "Order created successfully", order });
     } catch (err) {
-        console.error(err);
+        console.error("Error creating order:", err);
         res.status(400).json({ error: err.message });
     }
 });
+
 
 // Get all orders
 router.get("/", async (req, res) => {
