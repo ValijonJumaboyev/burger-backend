@@ -28,25 +28,39 @@ router.post("/", async (req, res) => {
 // Mark order as paid and update inventory
 router.patch("/:id/pay", async (req, res) => {
     try {
-        const order = await Order.findById(req.params.id);
-        if (!order) return res.status(404).json({ error: "Order not found" });
+        console.log("PATCH /orders/:id/pay called with ID:", req.params.id);
 
+        // 1️⃣ Fetch the order
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            console.log("Order not found");
+            return res.status(404).json({ error: "Order not found" });
+        }
+
+        console.log("Order fetched:", order);
+        console.log("Number of items in order:", order.items.length);
+
+        // 2️⃣ Check if already paid
         if (order.status === "paid") {
+            console.log("Order already paid");
             return res.status(400).json({ error: "Order already paid" });
         }
 
-        // Update inventory
+        // 3️⃣ Loop through each order item
         for (const orderItem of order.items) {
             try {
+                console.log("Processing order item:", orderItem);
+
                 const { name, quantity: orderQuantity } = orderItem;
                 if (!name || !orderQuantity) {
-                    console.warn("Invalid order item:", orderItem);
+                    console.warn("Invalid order item (missing name or quantity):", orderItem);
                     continue;
                 }
 
-                // Remove extra spaces and lowercase
+                // Trim name to remove hidden spaces
                 const cleanName = name.trim();
 
+                // Case-insensitive lookup in InventoryItems
                 const inventoryItem = await InventoryItems.findOne({
                     name: { $regex: `^${cleanName}$`, $options: "i" }
                 });
@@ -56,21 +70,25 @@ router.patch("/:id/pay", async (req, res) => {
                     continue;
                 }
 
+                console.log(`Found inventory item: ${inventoryItem.name}, current quantity: ${inventoryItem.quantity}`);
+
+                // Decrement quantity safely
                 const oldQuantity = inventoryItem.quantity;
                 inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
                 inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
 
+                // Save inventory update
                 await inventoryItem.save();
                 console.log(`Inventory updated for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`);
-            } catch (e) {
-                console.error("Error processing order item:", orderItem, e);
+            } catch (itemErr) {
+                console.error("Error processing order item:", orderItem, itemErr);
             }
         }
 
-
-        // Mark order as paid
+        // 4️⃣ Mark order as paid
         order.status = "paid";
         await order.save();
+        console.log("Order marked as paid");
 
         res.json({ message: "Order paid and inventory updated", order });
     } catch (err) {
