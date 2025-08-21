@@ -35,11 +35,15 @@ router.patch("/:id/pay", async (req, res) => {
             return res.status(400).json({ error: "Order already paid" });
         }
 
+        console.log("Paying order:", order._id);
+        console.log("Order items:", order.items);
+
         // Update inventory
         for (const orderItem of order.items) {
             const { name, quantity: orderQuantity } = orderItem;
 
-            const inventoryItem = await InventoryItems.findOne({ name });
+            // Case-insensitive lookup
+            const inventoryItem = await InventoryItems.findOne({ name: { $regex: `^${name}$`, $options: "i" } });
             if (!inventoryItem) {
                 console.warn("Inventory item not found for:", name);
                 continue;
@@ -48,9 +52,9 @@ router.patch("/:id/pay", async (req, res) => {
             const oldQuantity = inventoryItem.quantity;
             inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
             inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
-
             await inventoryItem.save();
-            console.log(`Inventory updated for ${name}: ${oldQuantity} → ${inventoryItem.quantity}`);
+
+            console.log(`Inventory updated for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`);
         }
 
         // Mark order as paid
@@ -63,6 +67,7 @@ router.patch("/:id/pay", async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
+
 
 // Get all orders
 router.get("/", async (req, res) => {
