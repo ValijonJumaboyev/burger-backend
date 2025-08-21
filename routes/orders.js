@@ -4,25 +4,41 @@ import InventoryItems from "../models/InventoryItems.js";
 
 const router = express.Router();
 
-// Create order
+// Create order (inventory not updated yet)
 router.post("/", async (req, res) => {
     try {
         const { items, customer } = req.body;
 
-        // Calculate total amount of the order
+        // Calculate total amount
         const totalAmount = items.reduce((acc, item) => acc + item.total, 0);
 
-        // Save the order to DB
+        // Save the order
         const order = new Order({ items, customer, totalAmount });
         await order.save();
 
-        console.log(`Order ${order._id} saved for customer: ${customer}`);
+        console.log(`Order ${order._id} created for customer: ${customer}`);
 
-        // Update inventory for each item in the order
-        for (const orderItem of items) {
+        res.status(201).json({ message: "Order created successfully", order });
+    } catch (err) {
+        console.error("Error creating order:", err);
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// Mark order as paid and update inventory
+router.patch("/:id/pay", async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+
+        if (order.status === "paid") {
+            return res.status(400).json({ error: "Order already paid" });
+        }
+
+        // Update inventory
+        for (const orderItem of order.items) {
             const { name, quantity: orderQuantity } = orderItem;
 
-            // Find inventory item by name
             const inventoryItem = await InventoryItems.findOne({ name });
             if (!inventoryItem) {
                 console.warn("Inventory item not found for:", name);
@@ -34,15 +50,19 @@ router.post("/", async (req, res) => {
             inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
 
             await inventoryItem.save();
+            console.log(`Inventory updated for ${name}: ${oldQuantity} → ${inventoryItem.quantity}`);
         }
 
-        res.status(201).json({ message: "Order created successfully", order });
+        // Mark order as paid
+        order.status = "paid";
+        await order.save();
+
+        res.json({ message: "Order paid and inventory updated", order });
     } catch (err) {
-        console.error("Error creating order:", err);
+        console.error("Error paying order:", err);
         res.status(400).json({ error: err.message });
     }
 });
-
 
 // Get all orders
 router.get("/", async (req, res) => {
@@ -56,7 +76,7 @@ router.get("/:id", async (req, res) => {
     res.json(order);
 });
 
-// Update order
+// Update order (general updates, not payment)
 router.patch("/:id", async (req, res) => {
     const order = await Order.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(order);
