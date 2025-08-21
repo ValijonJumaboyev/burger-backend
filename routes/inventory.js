@@ -1,35 +1,22 @@
 import express from "express";
 import Inventory from "../models/InventoryItems.js";
-import Order from "../models/Orders.js";
 
 const router = express.Router();
 
-
-
-// Create new order
+// --- Create Item ---
 router.post("/", async (req, res) => {
     try {
-        const { items } = req.body; // items = [{ name: "Bread", quantity: 2 }, ...]
+        const { name, category, unit, quantity, unitCost } = req.body;
+        const totalCost = quantity * unitCost;
 
-        // Save order
-        const newOrder = new Order({ items });
-        await newOrder.save();
+        const item = new Inventory({ name, category, unit, quantity, unitCost, totalCost });
+        await item.save();
 
-        // Decrement inventory for each item
-        for (const item of items) {
-            await Inventory.updateOne(
-                { name: item.name },
-                { $inc: { quantity: -item.quantity } }
-            );
-        }
-
-        res.status(201).json({ message: "Order created, inventory updated" });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Something went wrong" });
+        res.status(201).json(item);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
     }
 });
-
 
 // --- Get All Items ---
 router.get("/", async (req, res) => {
