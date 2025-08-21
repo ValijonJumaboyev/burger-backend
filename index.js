@@ -8,7 +8,7 @@ import orders from "./routes/orders.js"
 dotenv.config()
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 300;
 
 app.use(express.json());
 app.use(cors())

@@ -20,29 +20,20 @@ router.post("/", async (req, res) => {
 
         // Update inventory for each item in the order
         for (const orderItem of items) {
-            const { itemId, quantity: orderQuantity } = orderItem;
+            const { name, quantity: orderQuantity } = orderItem;
 
-            if (!itemId) {
-                console.warn("No itemId provided for order item:", orderItem);
-                continue;
-            }
-
-            const inventoryItem = await InventoryItems.findById(itemId);
+            // Find inventory item by name
+            const inventoryItem = await InventoryItems.findOne({ name });
             if (!inventoryItem) {
-                console.warn("Inventory item not found for id:", itemId);
+                console.warn("Inventory item not found for:", name);
                 continue;
             }
 
-            // Decrease inventory quantity safely
             const oldQuantity = inventoryItem.quantity;
             inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
             inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
 
             await inventoryItem.save();
-
-            console.log(
-                `Updated inventory for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`
-            );
         }
 
         res.status(201).json({ message: "Order created successfully", order });
