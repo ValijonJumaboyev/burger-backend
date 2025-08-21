@@ -35,27 +35,38 @@ router.patch("/:id/pay", async (req, res) => {
             return res.status(400).json({ error: "Order already paid" });
         }
 
-        console.log("Paying order:", order._id);
-        console.log("Order items:", order.items);
-
         // Update inventory
         for (const orderItem of order.items) {
-            const { name, quantity: orderQuantity } = orderItem;
+            try {
+                const { name, quantity: orderQuantity } = orderItem;
+                if (!name || !orderQuantity) {
+                    console.warn("Invalid order item:", orderItem);
+                    continue;
+                }
 
-            // Case-insensitive lookup
-            const inventoryItem = await InventoryItems.findOne({ name: { $regex: `^${name}$`, $options: "i" } });
-            if (!inventoryItem) {
-                console.warn("Inventory item not found for:", name);
-                continue;
+                // Remove extra spaces and lowercase
+                const cleanName = name.trim();
+
+                const inventoryItem = await InventoryItems.findOne({
+                    name: { $regex: `^${cleanName}$`, $options: "i" }
+                });
+
+                if (!inventoryItem) {
+                    console.warn("Inventory item not found for:", cleanName);
+                    continue;
+                }
+
+                const oldQuantity = inventoryItem.quantity;
+                inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
+                inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
+
+                await inventoryItem.save();
+                console.log(`Inventory updated for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`);
+            } catch (e) {
+                console.error("Error processing order item:", orderItem, e);
             }
-
-            const oldQuantity = inventoryItem.quantity;
-            inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
-            inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
-            await inventoryItem.save();
-
-            console.log(`Inventory updated for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`);
         }
+
 
         // Mark order as paid
         order.status = "paid";
