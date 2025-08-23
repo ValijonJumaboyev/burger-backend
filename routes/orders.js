@@ -1,6 +1,7 @@
 import express from "express";
 import Order from "../models/Orders.js";
 import InventoryItems from "../models/InventoryItems.js";
+import Recipe from "../models/Recipes.js";
 
 const router = express.Router();
 
@@ -26,6 +27,8 @@ router.post("/", async (req, res) => {
 });
 
 // Mark order as paid and update inventory
+import Recipe from "../models/Recipe.js"; // Make sure model is imported
+
 router.patch("/:id/pay", async (req, res) => {
     try {
         console.log("PATCH /orders/:id/pay called with ID:", req.params.id);
@@ -33,62 +36,97 @@ router.patch("/:id/pay", async (req, res) => {
         // 1️⃣ Fetch the order
         const order = await Order.findById(req.params.id);
         if (!order) {
-            console.log("Order not found");
             return res.status(404).json({ error: "Order not found" });
         }
 
-        console.log("Order fetched:", order);
-        console.log("Number of items in order:", order.items.length);
-
-        // 2️⃣ Check if already paid
+        // 2️⃣ Already paid check
         if (order.status === "paid") {
-            console.log("Order already paid");
             return res.status(400).json({ error: "Order already paid" });
         }
 
-        // 3️⃣ Loop through each order item
+        // Prepare all updates in memory first
+        const inventoryUpdates = [];
+
+        // 3️⃣ Process each order item
         for (const orderItem of order.items) {
-            try {
-                console.log("Processing order item:", orderItem);
+            const { name, quantity: orderQuantity } = orderItem;
+            if (!name || !orderQuantity) {
+                return res.status(400).json({
+                    error: `Invalid order item (missing name or quantity): ${JSON.stringify(orderItem)}`
+                });
+            }
 
-                const { name, quantity: orderQuantity } = orderItem;
-                if (!name || !orderQuantity) {
-                    console.warn("Invalid order item (missing name or quantity):", orderItem);
-                    continue;
+            const cleanName = name.trim();
+
+            // 🔎 Step A: Try to find a recipe for this product
+            const recipe = await Recipe.findOne({
+                productName: { $regex: `^${cleanName}$`, $options: "i" }
+            });
+
+            if (recipe) {
+                console.log(`Recipe found for ${cleanName}. Checking ingredients...`);
+
+                for (const ing of recipe.ingredients) {
+                    const requiredQty = ing.quantity * orderQuantity;
+
+                    const inventoryItem = await InventoryItems.findOne({
+                        name: { $regex: `^${ing.name}$`, $options: "i" }
+                    });
+
+                    if (!inventoryItem) {
+                        return res.status(400).json({
+                            error: `Ingredient not found in inventory: ${ing.name}`
+                        });
+                    }
+
+                    if (inventoryItem.quantity < requiredQty) {
+                        return res.status(400).json({
+                            error: `Not enough stock for ${ing.name}. Required: ${requiredQty} ${ing.unit}, Available: ${inventoryItem.quantity} ${inventoryItem.unit || "pcs"}`
+                        });
+                    }
+
+                    // Save update instruction
+                    inventoryUpdates.push({
+                        item: inventoryItem,
+                        newQty: inventoryItem.quantity - requiredQty
+                    });
                 }
-
-                // Trim name to remove hidden spaces
-                const cleanName = name.trim();
-
-                // Case-insensitive lookup in InventoryItems
+            } else {
+                // 🔎 Step B: Fallback to single inventory item
                 const inventoryItem = await InventoryItems.findOne({
                     name: { $regex: `^${cleanName}$`, $options: "i" }
                 });
 
                 if (!inventoryItem) {
-                    console.warn("Inventory item not found for:", cleanName);
-                    continue;
+                    return res.status(400).json({
+                        error: `Inventory item not found: ${cleanName}`
+                    });
                 }
 
-                console.log(`Found inventory item: ${inventoryItem.name}, current quantity: ${inventoryItem.quantity}`);
+                if (inventoryItem.quantity < orderQuantity) {
+                    return res.status(400).json({
+                        error: `Not enough stock for ${cleanName}. Required: ${orderQuantity}, Available: ${inventoryItem.quantity}`
+                    });
+                }
 
-                // Decrement quantity safely
-                const oldQuantity = inventoryItem.quantity;
-                inventoryItem.quantity = Math.max(0, oldQuantity - orderQuantity);
-                inventoryItem.totalCost = inventoryItem.quantity * inventoryItem.unitCost;
-
-                // Save inventory update
-                await inventoryItem.save();
-                console.log(`Inventory updated for ${inventoryItem.name}: ${oldQuantity} → ${inventoryItem.quantity}`);
-            } catch (itemErr) {
-                console.error("Error processing order item:", orderItem, itemErr);
+                inventoryUpdates.push({
+                    item: inventoryItem,
+                    newQty: inventoryItem.quantity - orderQuantity
+                });
             }
         }
 
-        // 4️⃣ Mark order as paid
+        // 4️⃣ Apply all updates
+        for (const upd of inventoryUpdates) {
+            upd.item.quantity = upd.newQty;
+            upd.item.totalCost = upd.item.quantity * upd.item.unitCost;
+            await upd.item.save();
+            console.log(`Inventory updated for ${upd.item.name}: → ${upd.newQty}`);
+        }
+
+        // 5️⃣ Mark order as paid
         order.status = "paid";
         await order.save();
-        console.log("Order marked as paid");
 
         res.json({ message: "Order paid and inventory updated", order });
     } catch (err) {
@@ -96,6 +134,7 @@ router.patch("/:id/pay", async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
+
 
 
 // Get all orders

@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cors from "cors"
 import inventoryRoutes from "./routes/inventory.js"
 import orders from "./routes/orders.js"
+import recipes from './routes/recipe.js';
 
 dotenv.config()
 
@@ -14,6 +15,7 @@ app.use(express.json());
 app.use(cors())
 app.use("/api/inventory", inventoryRoutes)
 app.use("/api/orders", orders)
+app.use("/api/recipes", recipes)
 
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('🟢 MongoDB connected'))
