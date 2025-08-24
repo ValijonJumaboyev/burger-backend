@@ -32,18 +32,48 @@ router.patch("/:id/pay", async (req, res) => {
     try {
         console.log("PATCH /orders/:id/pay called with ID:", req.params.id);
 
+        // 🔁 Conversion rules
+        const UNIT_CONVERSIONS = {
+            pcs: { pcs: 1 },
+            slice: { g: 20 },   // 1 slice cheese = 20g
+            slices: { g: 20 },
+            leaf: { g: 10 },    // 1 cabbage leaf = 10g
+            leaves: { g: 10 },
+            spoon: { g: 5 },    // 1 spoon = 5g (adjustable!)
+            spoons: { g: 5 },
+            g: { g: 1, kg: 0.001 },
+            kg: { g: 1000 },
+            mg: { g: 0.001 },
+            ml: { ml: 1, L: 0.001 },
+            L: { ml: 1000 }
+        };
+
+        function convertQuantity(qty, fromUnit, toUnit) {
+            fromUnit = fromUnit?.toLowerCase();
+            toUnit = toUnit?.toLowerCase();
+
+            if (!fromUnit || !toUnit) throw new Error("Missing unit for conversion");
+
+            // same units
+            if (fromUnit === toUnit) return qty;
+
+            // lookup conversion
+            if (UNIT_CONVERSIONS[fromUnit] && UNIT_CONVERSIONS[fromUnit][toUnit]) {
+                return qty * UNIT_CONVERSIONS[fromUnit][toUnit];
+            }
+
+            throw new Error(`No conversion rule from ${fromUnit} → ${toUnit}`);
+        }
+
         // 1️⃣ Fetch the order
         const order = await Order.findById(req.params.id);
-        if (!order) {
-            return res.status(404).json({ error: "Order not found" });
-        }
+        if (!order) return res.status(404).json({ error: "Order not found" });
 
         // 2️⃣ Already paid check
         if (order.status === "paid") {
             return res.status(400).json({ error: "Order already paid" });
         }
 
-        // Prepare all updates in memory first
         const inventoryUpdates = [];
 
         // 3️⃣ Process each order item
@@ -51,13 +81,13 @@ router.patch("/:id/pay", async (req, res) => {
             const { name, quantity: orderQuantity } = orderItem;
             if (!name || !orderQuantity) {
                 return res.status(400).json({
-                    error: `Invalid order item (missing name or quantity): ${JSON.stringify(orderItem)}`
+                    error: `Invalid order item: ${JSON.stringify(orderItem)}`
                 });
             }
 
             const cleanName = name.trim();
 
-            // 🔎 Step A: Try to find a recipe for this product
+            // 🔎 Step A: Look for recipe
             const recipe = await Recipe.findOne({
                 productName: { $regex: `^${cleanName}$`, $options: "i" }
             });
@@ -66,7 +96,7 @@ router.patch("/:id/pay", async (req, res) => {
                 console.log(`Recipe found for ${cleanName}. Checking ingredients...`);
 
                 for (const ing of recipe.ingredients) {
-                    const requiredQty = ing.quantity * orderQuantity;
+                    const requiredQtyRecipeUnit = ing.quantity * orderQuantity;
 
                     const inventoryItem = await InventoryItems.findOne({
                         name: { $regex: `^${ing.name}$`, $options: "i" }
@@ -78,13 +108,22 @@ router.patch("/:id/pay", async (req, res) => {
                         });
                     }
 
-                    if (inventoryItem.quantity < requiredQty) {
+                    // 🔁 Convert recipe qty → inventory unit
+                    let requiredQty;
+                    try {
+                        requiredQty = convertQuantity(requiredQtyRecipeUnit, ing.unit, inventoryItem.unit || "pcs");
+                    } catch (err) {
                         return res.status(400).json({
-                            error: `Not enough stock for ${ing.name}. Required: ${requiredQty} ${ing.unit}, Available: ${inventoryItem.quantity} ${inventoryItem.unit || "pcs"}`
+                            error: `Unit mismatch for ${ing.name}: ${err.message}`
                         });
                     }
 
-                    // Save update instruction
+                    if (inventoryItem.quantity < requiredQty) {
+                        return res.status(400).json({
+                            error: `Not enough stock for ${ing.name}. Required: ${requiredQty} ${inventoryItem.unit}, Available: ${inventoryItem.quantity} ${inventoryItem.unit}`
+                        });
+                    }
+
                     inventoryUpdates.push({
                         item: inventoryItem,
                         newQty: inventoryItem.quantity - requiredQty
@@ -120,7 +159,7 @@ router.patch("/:id/pay", async (req, res) => {
             upd.item.quantity = upd.newQty;
             upd.item.totalCost = upd.item.quantity * upd.item.unitCost;
             await upd.item.save();
-            console.log(`Inventory updated for ${upd.item.name}: → ${upd.newQty}`);
+            console.log(`Inventory updated for ${upd.item.name}: → ${upd.newQty} ${upd.item.unit}`);
         }
 
         // 5️⃣ Mark order as paid
@@ -133,6 +172,7 @@ router.patch("/:id/pay", async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
+
 
 
 
