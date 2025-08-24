@@ -27,7 +27,6 @@ router.post("/", async (req, res) => {
 });
 
 // Mark order as paid and update inventory
-import Recipe from "../models/Recipe.js"; // Make sure model is imported
 
 router.patch("/:id/pay", async (req, res) => {
     try {
